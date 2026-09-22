@@ -1,0 +1,25 @@
+[Unit]
+Description=Reel To Text — Telegram bot: Instagram Reel link -> transcript (Deepgram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reel-to-text
+Group=reel-to-text
+WorkingDirectory=/opt/reel-to-text
+EnvironmentFile=/opt/reel-to-text/.env
+Environment=DATA_DIR=/var/lib/reel-to-text
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/reel-to-text/venv/bin/python -m reel_to_text bot
+Restart=always
+RestartSec=5
+# hardening: the bot needs only its data dir
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/reel-to-text
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=Reel To Text — restart the bot if its heartbeat is stale
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'cd /opt/reel-to-text && DATA_DIR=/var/lib/reel-to-text /opt/reel-to-text/venv/bin/python -m reel_to_text health --max-age 180 || systemctl restart reel-to-text'

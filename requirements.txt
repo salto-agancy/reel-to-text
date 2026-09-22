@@ -1,0 +1,5 @@
+aiogram==3.17.0
+httpx==0.28.1
+python-dotenv==1.0.1
+# fallback Instagram provider; update often, Instagram breaks it regularly
+yt-dlp>=2026.1.1
