@@ -1,7 +1,7 @@
 """User-facing texts and result formatting for Telegram."""
 from __future__ import annotations
 
-from ...core.errors import (AccessDenied, InvalidUrl, NotAVideo, ProviderUnavailable,
+from ...core.errors import (AccessDenied, GlobalLimitReached, InvalidUrl, NotAVideo, ProviderUnavailable,
                             RateLimited, ReelNotFound, ReelToTextError, ReelTooLong,
                             TranscriptionFailed)
 from ...core.models import Transcript
@@ -44,6 +44,8 @@ def error_text(e: ReelToTextError) -> str:
         return f"Ролик длиннее лимита: {_mmss(e.duration)}, а можно до {_mmss(e.limit)}."
     if isinstance(e, RateLimited):
         return f"Лимит расшифровок исчерпан. Попробуй через {minutes(e.retry_after)}."
+    if isinstance(e, GlobalLimitReached):
+        return "Бот на сегодня исчерпал общий лимит расшифровок. Попробуй завтра."
     if isinstance(e, AccessDenied):
         return "Нет доступа."
     if isinstance(e, ProviderUnavailable):
@@ -108,3 +110,16 @@ def txt_file(t: Transcript) -> str:
     if t.duration:
         head.append(f"Длительность: {_mmss(t.duration)}")
     return "\n".join(head) + "\n\n" + t.text.strip() + "\n"
+
+
+def stats_text(st: dict, days: int) -> str:
+    lines = [
+        f"За {days} дн.: запросов {st['requests']}, людей {st['users']}",
+        f"Успешно {st['success']}, из кэша {st['cache_hits']}, платных {st['paid']}",
+    ]
+    if st["avg_paid_ms"]:
+        lines.append(f"Среднее время платной расшифровки: {st['avg_paid_ms'] / 1000:.1f} с")
+    if st["errors"]:
+        lines.append("Ошибки: " + ", ".join(f"{k} {v}" for k, v in st["errors"].items()))
+    lines.append(f"Роликов в кэше всего: {st['cached_transcripts']}")
+    return "\n".join(lines)

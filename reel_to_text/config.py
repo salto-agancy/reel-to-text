@@ -47,6 +47,7 @@ class Settings:
     max_download_mb: int = 100
     rate_limit_per_hour: int = 10
     rate_limit_per_day: int = 30
+    global_daily_limit: int = 0
     http_timeout: float = 30.0
     stt_timeout: float = 120.0
 
@@ -72,6 +73,7 @@ class Settings:
             max_download_mb=_int("MAX_DOWNLOAD_MB", 100),
             rate_limit_per_hour=_int("RATE_LIMIT_PER_HOUR", 10),
             rate_limit_per_day=_int("RATE_LIMIT_PER_DAY", 30),
+            global_daily_limit=_int("GLOBAL_DAILY_LIMIT", 0),
             http_timeout=_float("HTTP_TIMEOUT", 30.0),
             stt_timeout=_float("STT_TIMEOUT", 120.0),
             access_mode=(os.environ.get("ACCESS_MODE", "").strip().lower() or "allowlist"),

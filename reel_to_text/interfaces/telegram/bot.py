@@ -51,8 +51,9 @@ def build_dispatcher(core: ReelToText, access: Access) -> Dispatcher:
     async def stats(m: Message) -> None:
         if not access.is_admin(m.from_user.id):
             return
-        st = core.store.stats()
-        await m.answer(f"В кэше: {st['cached_transcripts']}\nПлатных запросов за 24 ч: {st['paid_requests_24h']}")
+        parts = (m.text or "").split()
+        days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+        await m.answer(texts.stats_text(core.store.stats(time.time() - days * 86400), days))
 
     @dp.message(F.text | F.caption)
     async def on_text(m: Message) -> None:
@@ -64,7 +65,10 @@ def build_dispatcher(core: ReelToText, access: Access) -> Dispatcher:
             await m.answer(texts.NO_ACCESS.format(user_id=user_id))
             return
         if not url:
-            await m.answer(texts.error_text(texts.InvalidUrl()), disable_web_page_preview=True)
+            try:
+                await core.transcribe(text, requester=f"tg:{user_id}")  # raises InvalidUrl, logs the event
+            except ReelToTextError as e:
+                await m.answer(texts.error_text(e), disable_web_page_preview=True)
             return
 
         status = await m.answer(texts.WORKING)

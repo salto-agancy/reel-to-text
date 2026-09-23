@@ -37,6 +37,11 @@ class RateLimited(ReelToTextError):
         self.retry_after = retry_after
 
 
+class GlobalLimitReached(ReelToTextError):
+    """The service-wide daily budget is spent."""
+    code = "global_limit"
+
+
 class AccessDenied(ReelToTextError):
     code = "access_denied"
 

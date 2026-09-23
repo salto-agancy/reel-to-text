@@ -21,7 +21,25 @@ CREATE TABLE IF NOT EXISTS requests (
     ts         REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS requests_by_user ON requests (requester, ts);
+-- one row per request from any interface; no transcript text, no captions
+CREATE TABLE IF NOT EXISTS events (
+    ts                 REAL NOT NULL,
+    user_id            TEXT NOT NULL,
+    reel_shortcode     TEXT,
+    duration           REAL,
+    processing_ms      INTEGER NOT NULL,
+    cache_hit          INTEGER NOT NULL,
+    instagram_provider TEXT,
+    stt_provider       TEXT,
+    stt_path           TEXT,
+    success            INTEGER NOT NULL,
+    error_type         TEXT
+);
+CREATE INDEX IF NOT EXISTS events_by_ts ON events (ts);
 """
+
+EVENT_FIELDS = ("ts", "user_id", "reel_shortcode", "duration", "processing_ms", "cache_hit",
+                "instagram_provider", "stt_provider", "stt_path", "success", "error_type")
 
 
 class Store:
@@ -69,10 +87,39 @@ class Store:
             # keep the table small: nothing older than two days matters
             self._db.execute("DELETE FROM requests WHERE ts < ?", (ts - 2 * 86400,))
 
-    def stats(self) -> dict:
+    def count_all_requests(self, since: float) -> int:
         with self._lock:
-            n = self._db.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]
-            day = self._db.execute(
-                "SELECT COUNT(*) FROM requests WHERE ts >= ?", (time.time() - 86400,)
-            ).fetchone()[0]
-        return {"cached_transcripts": n, "paid_requests_24h": day}
+            return self._db.execute("SELECT COUNT(*) FROM requests WHERE ts >= ?", (since,)).fetchone()[0]
+
+    def add_event(self, **event) -> None:
+        row = tuple(event.get(k) for k in EVENT_FIELDS)
+        with self._lock:
+            self._db.execute(
+                f"INSERT INTO events ({', '.join(EVENT_FIELDS)}) VALUES ({', '.join('?' * len(EVENT_FIELDS))})", row
+            )
+
+    def events(self, since: float = 0.0) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT {', '.join(EVENT_FIELDS)} FROM events WHERE ts >= ? ORDER BY ts", (since,)
+            ).fetchall()
+        return [dict(zip(EVENT_FIELDS, r)) for r in rows]
+
+    def stats(self, since: float) -> dict:
+        """Summary of events since `since` (unix time)."""
+        with self._lock:
+            total, ok, cached, users, paid, avg_ms = self._db.execute(
+                """SELECT COUNT(*), COALESCE(SUM(success), 0), COALESCE(SUM(cache_hit), 0),
+                          COUNT(DISTINCT user_id),
+                          COALESCE(SUM(CASE WHEN success = 1 AND cache_hit = 0 THEN 1 ELSE 0 END), 0),
+                          AVG(CASE WHEN success = 1 AND cache_hit = 0 THEN processing_ms END)
+                   FROM events WHERE ts >= ?""", (since,)
+            ).fetchone()
+            errors = self._db.execute(
+                "SELECT error_type, COUNT(*) FROM events WHERE ts >= ? AND success = 0 "
+                "GROUP BY error_type ORDER BY 2 DESC", (since,)
+            ).fetchall()
+            cached_total = self._db.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]
+        return {"requests": total, "success": ok, "cache_hits": cached, "users": users,
+                "paid": paid, "avg_paid_ms": int(avg_ms) if avg_ms else None,
+                "errors": dict(errors), "cached_transcripts": cached_total}

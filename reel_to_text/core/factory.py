@@ -42,7 +42,7 @@ def build_core(s: Settings) -> ReelToText:
         instagram=providers,
         stt=DeepgramStt(s.deepgram_api_key, s.deepgram_model, s.deepgram_language, s.stt_timeout),
         store=store,
-        limiter=RateLimiter(store, s.rate_limit_per_hour, s.rate_limit_per_day),
+        limiter=RateLimiter(store, s.rate_limit_per_hour, s.rate_limit_per_day, s.global_daily_limit),
         max_reel_seconds=s.max_reel_seconds,
         max_download_mb=s.max_download_mb,
         http_timeout=s.http_timeout,

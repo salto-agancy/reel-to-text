@@ -140,3 +140,43 @@ async def test_all_providers_down(tmp_path):
     core = make(tmp_path, [FakeProvider(exc=ProviderUnavailable("a")), FakeProvider(exc=ProviderUnavailable("b"))])
     with pytest.raises(ProviderUnavailable):
         await core.transcribe(URL, "u1")
+
+
+async def test_events_recorded_without_text(tmp_path):
+    core = make(tmp_path, per_hour=1)
+    await core.transcribe(URL, "tg:1")
+    await core.transcribe(URL, "tg:2")                      # cache hit
+    with pytest.raises(Exception):
+        await core.transcribe("нет ссылки", "tg:1")         # invalid_url
+    with pytest.raises(RateLimited):
+        await core.transcribe("https://instagram.com/reel/OTHER1/", "tg:1")
+    ev = core.store.events()
+    assert [(e["user_id"], e["success"], e["cache_hit"], e["error_type"]) for e in ev] == [
+        ("tg:1", 1, 0, None), ("tg:2", 1, 1, None), ("tg:1", 0, 0, "invalid_url"), ("tg:1", 0, 0, "rate_limited")]
+    first = ev[0]
+    assert first["reel_shortcode"] == "ABCDE12345" and first["duration"] == 30.0
+    assert first["instagram_provider"] == "fake" and first["stt_provider"] == "fake-stt"
+    assert first["stt_path"] == "remote_url" and first["processing_ms"] >= 0
+    assert "text" not in first and "caption" not in first
+    st = core.store.stats(0)
+    assert st["requests"] == 4 and st["paid"] == 1 and st["cache_hits"] == 1 and st["users"] == 2
+    assert st["errors"] == {"invalid_url": 1, "rate_limited": 1}
+
+
+async def test_failed_provider_event(tmp_path):
+    core = make(tmp_path, [FakeProvider(exc=ReelNotFound("x"))])
+    with pytest.raises(ReelNotFound):
+        await core.transcribe(URL, "tg:1")
+    (e,) = core.store.events()
+    assert e["error_type"] == "not_found" and e["reel_shortcode"] == "ABCDE12345"
+
+
+async def test_global_daily_limit_counts_admins(tmp_path):
+    from reel_to_text.core.errors import GlobalLimitReached
+    store = Store(tmp_path / "db.sqlite")
+    core = ReelToText([FakeProvider()], FakeStt(), store, RateLimiter(store, 100, 100, global_per_day=2), tmp_dir=tmp_path)
+    await core.transcribe("https://instagram.com/reel/AAAAA1/", "admin", unlimited=True)
+    await core.transcribe("https://instagram.com/reel/AAAAA2/", "u1")
+    with pytest.raises(GlobalLimitReached):
+        await core.transcribe("https://instagram.com/reel/AAAAA3/", "u2")
+    await core.transcribe("https://instagram.com/reel/AAAAA1/", "u2")  # cache still free

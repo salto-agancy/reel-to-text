@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
@@ -17,7 +18,7 @@ import httpx
 from ..providers.instagram.base import InstagramProvider
 from ..providers.transcription.base import SpeechToText
 from ..providers.transcription.deepgram import RemoteFetchFailed
-from .errors import (NotAVideo, ProviderUnavailable, ReelNotFound, ReelTooLong,
+from .errors import (NotAVideo, ProviderUnavailable, ReelNotFound, ReelToTextError, ReelTooLong,
                      TranscriptionFailed)
 from .limits import RateLimiter
 from .models import ReelMedia, Transcript
@@ -47,8 +48,38 @@ class ReelToText:
 
     async def transcribe(self, text_or_url: str, requester: str = "anonymous",
                          unlimited: bool = False) -> Transcript:
-        """Main entry point. `requester` is a stable id for rate limiting ("tg:123")."""
+        """Main entry point. `requester` is a stable id for rate limiting and stats ("tg:123").
+
+        Every call leaves one row in the events table: who, which reel, how long, which path,
+        success or error type. Never the transcript text.
+        """
+        started = time.monotonic()
+        event: dict = {"ts": time.time(), "user_id": requester, "cache_hit": 0, "success": 0}
+        try:
+            t = await self._transcribe(text_or_url, requester, unlimited, event)
+            event.update(success=1, cache_hit=int(t.cached), duration=t.duration,
+                         instagram_provider=t.instagram_provider, stt_provider=t.stt_provider,
+                         stt_path=t.stt_path)
+            return t
+        except ReelToTextError as e:
+            event["error_type"] = e.code
+            raise
+        except asyncio.CancelledError:
+            event["error_type"] = "cancelled"
+            raise
+        except Exception as e:
+            event["error_type"] = f"crash:{type(e).__name__}"
+            raise
+        finally:
+            event["processing_ms"] = int((time.monotonic() - started) * 1000)
+            try:
+                self.store.add_event(**event)
+            except Exception:
+                log.exception("event_write_failed")
+
+    async def _transcribe(self, text_or_url: str, requester: str, unlimited: bool, event: dict) -> Transcript:
         shortcode = extract_shortcode(text_or_url)
+        event["reel_shortcode"] = shortcode
 
         cached = self.store.get_transcript(shortcode)
         if cached:
@@ -69,9 +100,9 @@ class ReelToText:
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._inflight[shortcode] = fut
         try:
-            if not unlimited:
-                self.limiter.record(requester)
-            transcript = await self._run(shortcode)
+            # admins skip the checks, but their paid requests still count toward the global budget
+            self.limiter.record(requester)
+            transcript = await self._run(shortcode, event)
             self.store.put_transcript(transcript)
             fut.set_result(transcript)
             return transcript
@@ -85,8 +116,9 @@ class ReelToText:
         finally:
             self._inflight.pop(shortcode, None)
 
-    async def _run(self, shortcode: str) -> Transcript:
+    async def _run(self, shortcode: str, event: dict) -> Transcript:
         media = await self._get_media(shortcode)
+        event.update(duration=media.duration, instagram_provider=media.provider)
         if media.duration and media.duration > self.max_reel_seconds:
             raise ReelTooLong(media.duration, self.max_reel_seconds)
 

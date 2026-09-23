@@ -3,6 +3,7 @@
   python -m reel_to_text bot            run the Telegram bot
   python -m reel_to_text transcribe URL one-off transcription in the terminal (no limits)
   python -m reel_to_text health         exit 0 if the bot heartbeat is fresh
+  python -m reel_to_text stats [--csv]  usage statistics (no transcript content)
 """
 from __future__ import annotations
 
@@ -34,6 +35,9 @@ def main() -> None:
     tr = sub.add_parser("transcribe")
     tr.add_argument("url")
     tr.add_argument("--json", action="store_true", help="print the full Transcript object")
+    st = sub.add_parser("stats")
+    st.add_argument("--days", type=int, default=30)
+    st.add_argument("--csv", action="store_true", help="dump raw events as CSV")
     hc = sub.add_parser("health")
     hc.add_argument("--max-age", type=int, default=120)
     args = ap.parse_args()
@@ -52,6 +56,17 @@ def main() -> None:
             print(f"error: {e.code}: {e}", file=sys.stderr)
             sys.exit(2)
         print(json.dumps(t.to_dict(), ensure_ascii=False, indent=2) if args.json else t.text)
+    elif args.cmd == "stats":
+        import csv
+        from .core.store import EVENT_FIELDS, Store
+        store = Store(s.data_dir / "reel_to_text.sqlite")
+        since = time.time() - args.days * 86400
+        if args.csv:
+            w = csv.DictWriter(sys.stdout, fieldnames=EVENT_FIELDS)
+            w.writeheader()
+            w.writerows(store.events(since))
+        else:
+            print(json.dumps(store.stats(since), ensure_ascii=False, indent=2))
     elif args.cmd == "health":
         hb = s.data_dir / "heartbeat"
         try:
